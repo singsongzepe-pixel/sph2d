@@ -63,13 +63,21 @@ target("v3")
     add_files("src/main_v3.cpp")
     add_packages("raylib")
     set_languages("cxx17")
+    set_optimize("fastest")
 
     if is_plat("windows") then
+        -- enable OpenMP on Windows
         add_cxflags("/openmp")
+        -- enable AVX512 on Windows
+        add_cxflags("/arch:AVX2", "/fp:fast")
     else
         add_cxflags("-fopenmp")
         add_ldflags("-fopenmp")
+
+        -- on gcc, g++
+        add_cxflags("-mavx2", "-mfma")
     end
 
-    add_options("-O3")
-    
+    set_symbols("debug")
+    add_vectorexts("avx2")
+

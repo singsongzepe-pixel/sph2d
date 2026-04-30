@@ -391,6 +391,29 @@ struct SpatialHashGridSoA {
             }
         }
     }
+
+    // process 16 particles in a time by callback16, and remaining particles process by callback1
+    template <typename Func16, typename Func1>
+    inline void forEachNeighbour16(
+        int i,
+        const ParticleSystem& system,
+        float h, float h2,
+        Func16 callback16,
+        Func1 callback1
+    ) const {
+        float xi = system.x[i];
+        float yi = system.y[i];
+    }
+
+    std::array<int, 9> getNeighbourCells(int c) const {
+        int c_minus_grid_w = c - grid_w;
+        int c_plus_grid_w = c + grid_w;
+        return {
+            c_minus_grid_w - 1, c_minus_grid_w, c_minus_grid_w + 1,     // top line
+            c - 1,              c,               c + 1,                 // curr line
+            c_plus_grid_w - 1,  c_plus_grid_w,  c_plus_grid_w + 1       // bottom line
+        };
+    }
 };
 
 } // namespace sph2d::collection

@@ -4,6 +4,12 @@
 #include <array>
 #include <raylib.h>
 
+#ifdef _MSC_VER
+    #define FORCE_INLINE __forceinline inline
+#else
+    #define FORCE_INLINE __attribute__((always_inline)) inline
+#endif
+
 // already defined in raylib
 // #define PI 3.1415926535f
 
@@ -114,15 +120,15 @@ std::array<float, 2> get_dW_dxi(float dx, float dy) {
 }
 
 // some other kernel function
-// POLY 6 kernel function
+// POLY6 kernel function
 const float alpha_poly6 = 4.0f / (PI * std::pow(H, 8));
-float get_W_poly6(float r2) {
+FORCE_INLINE float get_W_poly6(float r2) {
     float term = H2 - r2;
     return alpha_poly6 * (term * term * term);
 }
 
 const float beta_poly6 = -24.0f / (PI * std::pow(H, 8));
-std::array<float, 2> get_dW_dxi_poly6(float dx, float dy) {
+FORCE_INLINE std::array<float, 2> get_dW_dxi_poly6(float dx, float dy) {
     float r2 = dx*dx + dy*dy;
     float term = H2 - r2;
 
@@ -132,6 +138,16 @@ std::array<float, 2> get_dW_dxi_poly6(float dx, float dy) {
         common * dy,
     };
 }
+
+// simd version of POLY6
+FORCE_INLINE __m512 get_W_poly6_simd(__m512 v_r2, __m512 v_H2, __m512 v_factor) {
+    __m512 diff = _mm512_sub_ps(v_H2, v_r2);
+    __m512 diff2 = _mm512_mul_ps(diff, diff);
+    __m512 diff3 = _mm512_mul_ps(diff2, diff);
+
+    return _mm512_mul_ps(v_factor, diff3);
+}
+
 
 const float GAMMA = 7;
 const float B = 30000.0f;               // stiffness

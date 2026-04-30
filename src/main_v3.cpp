@@ -23,44 +23,66 @@ void computeDensityPressure(
     ParticleSystem& system, 
     const SpatialHashGridSoA& grid
 ) {
-    int n = system.x.size();
+    int w = grid.grid_w;
+    int h = grid.grid_h;
+    int n = grid.grid_n;
 
+    const __m512 v_H2 = _mm512_set1_ps(H2);
+    const __m512 v_poly6_factor = _mm512_set1_ps(alpha_poly6);
+
+    // for each cell, process all its particles
+    // beacause there is ghost cell, we start with grid_w + 1
     #pragma omp parallel for schedule(static)
-    for (int i = 0; i < n; i++) {
+    for (int c = w + 1; c <= h*w-2; c++) {
+        int i_start = grid.cell_start[c];
+        int i_end = grid.cell_start[c+1];
 
-if constexpr (RHO_VAR == 1) { // ! var 1 basic 
+        // [i_start, i_end)
+        // for each particle in the cell
+        for (int i = i_start; i < i_end; i++) {
 
-        float rhoi = 0.0f;
-        grid.forEachNeighbour(i, system, H, H2, [&](int j) {
-            float dx = system.x[i] - system.x[j];
-            float dy = system.y[i] - system.y[j];
-            float r2 = dx*dx + dy*dy;
-            rhoi += system.mass[j] * get_W_poly6(r2);
-        });
-        system.rho[i] = rhoi;
+            __m512 v_xi = _mm512_set1_ps(system.x[i]);
+            __m512 v_yi = _mm512_set1_ps(system.y[i]);
+            __m512 v_rho_acc = _mm512_setzero_ps();
+            
+            float rhoi = 0.0f;
+            // for each other particle in the neighbouring cell (self-cell included)
+            for (const int nc : grid.getNeighbourCells(c)) {
+                int j_start = grid.cell_start[nc]; 
+                int j_end = grid.cell_start[nc+1];
+                int j_count = j_end - j_start;
 
-} else if constexpr (RHO_VAR == 2) { // ! var 2 Shepard normalized
+                // [j_start, j_end)
+                // vectorized 16 particles in a time
+                for (int j = 0; j < j_count; j += 16) {
+                    // i-th particle itself should be included
+                    // so no if (i != j) { }
+                    int remaining = j_count - j;
+                    __mmask16 mask = (remaining >= 16) ? 0xFFFF : (1U << remaining) - 1;
 
-        float mass_total = 0.0f;
-        float correction = 0.0f;
+                    int curr_j = j_start + j;
+                    __m512 v_xj = _mm512_maskz_loadu_ps(mask, &system.x[curr_j]);
+                    __m512 v_yj = _mm512_maskz_loadu_ps(mask, &system.y[curr_j]);
+                    __m512 v_mj = _mm512_maskz_loadu_ps(mask, &system.mass[curr_j]);
 
-        grid.forEachNeighbour(i, system, H, H2, [&](int j) {
-            float dx = system.x[i] - system.x[j];
-            float dy = system.y[i] - system.y[j];
+                    __m512 v_dx = _mm512_sub_ps(v_xi, v_xj);
+                    __m512 v_dy = _mm512_sub_ps(v_yi, v_yj);
+                    __m512 v_r2 = _mm512_mul_ps(v_dx, v_dx);
+                    // fma
+                    v_r2 = _mm512_fmadd_ps(v_dy, v_dy, v_r2);
 
-            float r2 = dx*dx + dy*dy;
-            float w = get_W_poly6(r2);
+                    // range mask, if r2 < H2
+                    __mmask16 range_mask = _mm512_mask_cmp_ps_mask(mask, v_r2, v_H2, _CMP_LT_OQ);
 
-            float tmp = system.mass[j] * w;
-            mass_total += tmp;
-            correction += tmp / system.rho[j]; 
-        });
-
-        system.rho[i] = mass_total / (correction + EPSILON);
-
-} // var 2 end
-
-        system.pressure[i] = get_pressure(system.rho[i]);
+                    if (range_mask > 0) {
+                        __m512 v_w = get_W_poly6_simd(v_r2, v_H2, v_poly6_factor);
+                        v_rho_acc = _mm512_mask3_fmadd_ps(v_mj, v_w, v_rho_acc, range_mask);
+                    }
+                }
+            }
+            system.rho[i] = _mm512_reduce_add_ps(v_rho_acc);
+            system.pressure[i] = get_pressure(system.rho[i]);
+        }
     }
 }
 
