@@ -189,7 +189,7 @@ void computeAcceleration(ParticleSystem& system, const SpatialHashGridSoA& grid)
     int w = grid.grid_w;
     int h = grid.grid_h;
 
-    // 预加载所有不变的常数向量，极大地节省寄存器压力
+    // pre-load all constant vectors, greatly reducing register pressure
     const __m512 v_H2 = _mm512_set1_ps(H2);
     const __m512 v_H = _mm512_set1_ps(H);
     const __m512 v_eps_H2 = _mm512_set1_ps(0.01f * H2);
@@ -200,7 +200,7 @@ void computeAcceleration(ParticleSystem& system, const SpatialHashGridSoA& grid)
     const __m512 v_ones = _mm512_set1_ps(1.0f);
     const __m512 v_zero = _mm512_setzero_ps();
 
-    // 嵌套循环遍历，完美跳过最外层的 Ghost Cells
+    // skip the outer Ghost Cells
     #pragma omp parallel for schedule(dynamic, DYNAMIC_SCHEDULE_CELL_BASED)
     for (int c = w + 1; c <= h*w-2; c++) {
         int i_start = grid.cell_start[c];
@@ -210,7 +210,7 @@ void computeAcceleration(ParticleSystem& system, const SpatialHashGridSoA& grid)
         // for each particle in the cell
         for (int i = i_start; i < i_end; i++) {
             
-            // 1. 标量预计算中心粒子 i 的属性，提取除法，避免在内层循环重复计算
+            // 1. pre-calculate properties of particle i
             float rhoi = system.rho[i];
             float inv_rhoi2_scalar = 1.0f / (rhoi * rhoi);
             
@@ -220,7 +220,7 @@ void computeAcceleration(ParticleSystem& system, const SpatialHashGridSoA& grid)
             __m512 v_vyi = _mm512_set1_ps(system.vy[i]);
             __m512 v_rhoi = _mm512_set1_ps(rhoi);
             
-            // 提前计算好 p/rho^2，作为累加时的不变量
+            // pre-calculate p/rho^2, as a constant vector for accumulation
             __m512 v_pxxi_rhoi = _mm512_set1_ps(system.pxx[i] * inv_rhoi2_scalar);
             __m512 v_pxyi_rhoi = _mm512_set1_ps(system.pxy[i] * inv_rhoi2_scalar);
             __m512 v_pyyi_rhoi = _mm512_set1_ps(system.pyy[i] * inv_rhoi2_scalar);
@@ -238,7 +238,7 @@ void computeAcceleration(ParticleSystem& system, const SpatialHashGridSoA& grid)
                     __mmask16 mask = (remaining >= 16) ? 0xFFFF : (1U << remaining) - 1;
                     int curr_j = j_start + j;
 
-                    // 步骤 A：仅加载坐标并验证距离 (延迟加载优化)
+                    // step A (lazy loading optimization)
                     __m512 v_xj = _mm512_maskz_loadu_ps(mask, &system.x[curr_j]);
                     __m512 v_yj = _mm512_maskz_loadu_ps(mask, &system.y[curr_j]);
                     
@@ -246,11 +246,10 @@ void computeAcceleration(ParticleSystem& system, const SpatialHashGridSoA& grid)
                     __m512 v_dy = _mm512_sub_ps(v_yi, v_yj);
                     __m512 v_r2 = _mm512_fmadd_ps(v_dx, v_dx, _mm512_mul_ps(v_dy, v_dy));
 
-                    // 二次过滤掩码: 处于平滑半径内
+                    // particles within the smoothing radius
                     __mmask16 range_mask = _mm512_mask_cmp_ps_mask(mask, v_r2, v_H2, _CMP_LT_OQ);
 
                     if (range_mask > 0) {
-                        // 步骤 B：只对真正需要的粒子加载繁重的物理属性
                         __m512 v_vxj  = _mm512_maskz_loadu_ps(range_mask, &system.vx[curr_j]);
                         __m512 v_vyj  = _mm512_maskz_loadu_ps(range_mask, &system.vy[curr_j]);
                         __m512 v_mj   = _mm512_maskz_loadu_ps(range_mask, &system.mass[curr_j]);
@@ -259,11 +258,11 @@ void computeAcceleration(ParticleSystem& system, const SpatialHashGridSoA& grid)
                         __m512 v_pxyj = _mm512_maskz_loadu_ps(range_mask, &system.pxy[curr_j]);
                         __m512 v_pyyj = _mm512_maskz_loadu_ps(range_mask, &system.pyy[curr_j]);
 
-                        // 计算梯度 dW
+                        // calculate dW
                         __m512 v_dWx, v_dWy;
                         get_dW_dxi_poly6_simd(v_dx, v_dy, v_r2, v_H2, v_f_grad, v_dWx, v_dWy, range_mask);
 
-                        // --- 1. 应力张量力计算 ---
+                        // --- 1. calculate stress tensor ---
                         __m512 v_rhoj2 = _mm512_mul_ps(v_rhoj, v_rhoj);
                         __m512 v_inv_rhoj2 = _mm512_div_ps(v_ones, v_rhoj2);
                         
@@ -272,26 +271,26 @@ void computeAcceleration(ParticleSystem& system, const SpatialHashGridSoA& grid)
                         __m512 v_term2 = _mm512_fmadd_ps(v_pxyj, v_inv_rhoj2, v_pxyi_rhoi);
                         __m512 v_term3 = _mm512_fmadd_ps(v_pyyj, v_inv_rhoj2, v_pyyi_rhoi);
 
-                        // 组合累加: axi += mj * (term1*dWx + term2*dWy)
+                        // accumulate: axi += mj * (term1*dWx + term2*dWy)
                         __m512 v_ax_step = _mm512_fmadd_ps(v_term1, v_dWx, _mm512_mul_ps(v_term2, v_dWy));
                         v_axi = _mm512_mask3_fmadd_ps(v_mj, v_ax_step, v_axi, range_mask);
 
-                        // 组合累加: ayi += mj * (term2*dWx + term3*dWy)
+                        // accumulate: ayi += mj * (term2*dWx + term3*dWy)
                         __m512 v_ay_step = _mm512_fmadd_ps(v_term2, v_dWx, _mm512_mul_ps(v_term3, v_dWy));
                         v_ayi = _mm512_mask3_fmadd_ps(v_mj, v_ay_step, v_ayi, range_mask);
 
-                        // --- 2. 人工黏性 (Monaghan) 计算 ---
+                        // --- 2. calculate artificial viscosity (Monaghan) ---
                         __m512 v_dvx = _mm512_sub_ps(v_vxi, v_vxj);
                         __m512 v_dvy = _mm512_sub_ps(v_vyi, v_vyj);
                         // vdotr = dvx*dx + dvy*dy
                         __m512 v_vdotr = _mm512_fmadd_ps(v_dvx, v_dx, _mm512_mul_ps(v_dvy, v_dy));
 
-                        // 三次过滤掩码：仅当相互靠近时 (vdotr < 0) 计算黏性
+                        // only vdotr < 0 calculate viscosity
                         __mmask16 visc_mask = _mm512_mask_cmp_ps_mask(range_mask, v_vdotr, v_zero, _CMP_LT_OQ);
 
                         if (visc_mask > 0) {
                             __m512 v_denom = _mm512_add_ps(v_r2, v_eps_H2);
-                            // mu = H * vdotr / denom (使用带掩码的安全除法)
+                            // mu = H * vdotr / denom (using masked division)
                             __m512 v_mu = _mm512_mask_div_ps(v_zero, visc_mask, _mm512_mul_ps(v_H, v_vdotr), v_denom);
                             
                             __m512 v_rhoAvg = _mm512_mul_ps(v_half, _mm512_add_ps(v_rhoi, v_rhoj));
@@ -303,7 +302,7 @@ void computeAcceleration(ParticleSystem& system, const SpatialHashGridSoA& grid)
                             
                             __m512 v_mj_pi = _mm512_mul_ps(v_mj, v_pi);
                             
-                            // axi -= mj * pi * dWx => 相当于 -(mj_pi * dW) + axi
+                            // axi -= mj * pi * dWx => -(mj_pi * dWx) + axi
                             // FNMADD: -(A*B) + C
                             v_axi = _mm512_mask3_fnmadd_ps(v_mj_pi, v_dWx, v_axi, visc_mask);
                             v_ayi = _mm512_mask3_fnmadd_ps(v_mj_pi, v_dWy, v_ayi, visc_mask);
@@ -312,7 +311,7 @@ void computeAcceleration(ParticleSystem& system, const SpatialHashGridSoA& grid)
                 }
             }
             
-            // 水平归约，添加外力并写回
+            // reduce and write back to system
             system.ax[i] = _mm512_reduce_add_ps(v_axi);
             system.ay[i] = _mm512_reduce_add_ps(v_ayi) + GRAV;
         }
