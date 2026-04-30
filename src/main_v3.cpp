@@ -94,159 +94,228 @@ void computeStress(ParticleSystem& system, const SpatialHashGridSoA& grid) {
     const __m512 v_f_grad = _mm512_set1_ps(beta_poly6);
 
     #pragma omp parallel for schedule(dynamic, DYNAMIC_SCHEDULE_CELL_BASED)
-    for (int y = 1; y < h - 1; y++) {
-        for (int x = 1; x < w - 1; x++) {
-            int c = y * w + x;
-            for (int i = grid.cell_start[c]; i < grid.cell_start[c+1]; i++) {
-                
-                // properties of particle i
-                __m512 v_xi = _mm512_set1_ps(system.x[i]);
-                __m512 v_yi = _mm512_set1_ps(system.y[i]);
-                __m512 v_vxi = _mm512_set1_ps(system.vx[i]);
-                __m512 v_vyi = _mm512_set1_ps(system.vy[i]);
+    for (int c = w + 1; c <= h*w-2; c++) {
+        int i_start = grid.cell_start[c];
+        int i_end = grid.cell_start[c+1];
 
-                // accumulator for dv/dx, dv/dy, dW/dx, dW/dy
-                __m512 v_dvx_dx = _mm512_setzero_ps();
-                __m512 v_dvx_dy = _mm512_setzero_ps();
-                __m512 v_dvy_dx = _mm512_setzero_ps();
-                __m512 v_dvy_dy = _mm512_setzero_ps();
+        // [i_start, i_end)
+        // for each particle in the cell
+        for (int i = i_start; i < i_end; i++) {
+            
+            // properties of particle i
+            __m512 v_xi = _mm512_set1_ps(system.x[i]);
+            __m512 v_yi = _mm512_set1_ps(system.y[i]);
+            __m512 v_vxi = _mm512_set1_ps(system.vx[i]);
+            __m512 v_vyi = _mm512_set1_ps(system.vy[i]);
 
-                for (const int nc : grid.getNeighbourCells(c)) {
-                    int j_start = grid.cell_start[nc]; 
-                    int j_end = grid.cell_start[nc+1];
-                    int j_count = j_end - j_start;
+            // accumulator for dv/dx, dv/dy, dW/dx, dW/dy
+            __m512 v_dvx_dx = _mm512_setzero_ps();
+            __m512 v_dvx_dy = _mm512_setzero_ps();
+            __m512 v_dvy_dx = _mm512_setzero_ps();
+            __m512 v_dvy_dy = _mm512_setzero_ps();
 
-                    for (int j = 0; j < j_count; j += 16) {
-                        int remaining = j_count - j;
-                        __mmask16 mask = (remaining >= 16) ? 0xFFFF : (1U << remaining) - 1;
-                        int curr_j = j_start + j;
+            for (const int nc : grid.getNeighbourCells(c)) {
+                int j_start = grid.cell_start[nc]; 
+                int j_end = grid.cell_start[nc+1];
+                int j_count = j_end - j_start;
 
-                        // properties of particle j
-                        __m512 v_xj = _mm512_maskz_loadu_ps(mask, &system.x[curr_j]);
-                        __m512 v_yj = _mm512_maskz_loadu_ps(mask, &system.y[curr_j]);
-                        __m512 v_vxj = _mm512_maskz_loadu_ps(mask, &system.vx[curr_j]);
-                        __m512 v_vyj = _mm512_maskz_loadu_ps(mask, &system.vy[curr_j]);
-                        __m512 v_mj = _mm512_maskz_loadu_ps(mask, &system.mass[curr_j]);
-                        __m512 v_rhoj = _mm512_maskz_loadu_ps(mask, &system.rho[curr_j]);
+                for (int j = 0; j < j_count; j += 16) {
+                    int remaining = j_count - j;
+                    __mmask16 mask = (remaining >= 16) ? 0xFFFF : (1U << remaining) - 1;
+                    int curr_j = j_start + j;
 
-                        // calculate dx, dy, r2
-                        __m512 v_dx = _mm512_sub_ps(v_xi, v_xj);
-                        __m512 v_dy = _mm512_sub_ps(v_yi, v_yj);
-                        __m512 v_r2 = _mm512_fmadd_ps(v_dx, v_dx, _mm512_mul_ps(v_dy, v_dy));
+                    // properties of particle j
+                    __m512 v_xj = _mm512_maskz_loadu_ps(mask, &system.x[curr_j]);
+                    __m512 v_yj = _mm512_maskz_loadu_ps(mask, &system.y[curr_j]);
+                    __m512 v_vxj = _mm512_maskz_loadu_ps(mask, &system.vx[curr_j]);
+                    __m512 v_vyj = _mm512_maskz_loadu_ps(mask, &system.vy[curr_j]);
+                    __m512 v_mj = _mm512_maskz_loadu_ps(mask, &system.mass[curr_j]);
+                    __m512 v_rhoj = _mm512_maskz_loadu_ps(mask, &system.rho[curr_j]);
 
-                        __mmask16 range_mask = _mm512_mask_cmp_ps_mask(mask, v_r2, v_H2, _CMP_LT_OQ);
+                    // calculate dx, dy, r2
+                    __m512 v_dx = _mm512_sub_ps(v_xi, v_xj);
+                    __m512 v_dy = _mm512_sub_ps(v_yi, v_yj);
+                    __m512 v_r2 = _mm512_fmadd_ps(v_dx, v_dx, _mm512_mul_ps(v_dy, v_dy));
 
-                        if (range_mask > 0) {
-                            // calculate V = m / rho
-                            __m512 v_vol = _mm512_div_ps(v_mj, v_rhoj);
-                            
-                            // calculate dv = vj - vi
-                            __m512 v_dvx = _mm512_sub_ps(v_vxj, v_vxi);
-                            __m512 v_dvy = _mm512_sub_ps(v_vyj, v_vyi);
+                    __mmask16 range_mask = _mm512_mask_cmp_ps_mask(mask, v_r2, v_H2, _CMP_LT_OQ);
 
-                            // calculate dW/dx, dW/dy
-                            __m512 v_dWx, v_dWy;
-                            get_dW_dxi_poly6_simd(v_dx, v_dy, v_r2, v_H2, v_f_grad, v_dWx, v_dWy, range_mask);
+                    if (range_mask > 0) {
+                        // calculate V = m / rho
+                        __m512 v_vol = _mm512_div_ps(v_mj, v_rhoj);
+                        
+                        // calculate dv = vj - vi
+                        __m512 v_dvx = _mm512_sub_ps(v_vxj, v_vxi);
+                        __m512 v_dvy = _mm512_sub_ps(v_vyj, v_vyi);
 
-                            // accumulate: dv_dx += V * dvx * dWx ...
-                            __m512 v_val = _mm512_mul_ps(v_vol, v_dWx);
-                            v_dvx_dx = _mm512_mask3_fmadd_ps(v_dvx, v_val, v_dvx_dx, range_mask);
-                            v_dvy_dx = _mm512_mask3_fmadd_ps(v_dvy, v_val, v_dvy_dx, range_mask);
+                        // calculate dW/dx, dW/dy
+                        __m512 v_dWx, v_dWy;
+                        get_dW_dxi_poly6_simd(v_dx, v_dy, v_r2, v_H2, v_f_grad, v_dWx, v_dWy, range_mask);
 
-                            v_val = _mm512_mul_ps(v_vol, v_dWy);
-                            v_dvx_dy = _mm512_mask3_fmadd_ps(v_dvx, v_val, v_dvx_dy, range_mask);
-                            v_dvy_dy = _mm512_mask3_fmadd_ps(v_dvy, v_val, v_dvy_dy, range_mask);
-                        }
+                        // accumulate: dv_dx += V * dvx * dWx ...
+                        __m512 v_val = _mm512_mul_ps(v_vol, v_dWx);
+                        v_dvx_dx = _mm512_mask3_fmadd_ps(v_dvx, v_val, v_dvx_dx, range_mask);
+                        v_dvy_dx = _mm512_mask3_fmadd_ps(v_dvy, v_val, v_dvy_dx, range_mask);
+
+                        v_val = _mm512_mul_ps(v_vol, v_dWy);
+                        v_dvx_dy = _mm512_mask3_fmadd_ps(v_dvx, v_val, v_dvx_dy, range_mask);
+                        v_dvy_dy = _mm512_mask3_fmadd_ps(v_dvy, v_val, v_dvy_dy, range_mask);
                     }
                 }
+            }
 
-                // restore scalar values
-                float dvx_dx = _mm512_reduce_add_ps(v_dvx_dx);
-                float dvx_dy = _mm512_reduce_add_ps(v_dvx_dy);
-                float dvy_dx = _mm512_reduce_add_ps(v_dvy_dx);
-                float dvy_dy = _mm512_reduce_add_ps(v_dvy_dy);
-                float divv = dvx_dx + dvy_dy;
-                
-                // physical calculation
-                if constexpr (IDEAL_FLUID == 1) {
-                    system.pxx[i] = -system.pressure[i];
-                    system.pxy[i] = 0.0f;
-                    system.pyy[i] = -system.pressure[i];
-                } else {
-                    system.pxx[i] = -system.pressure[i] - _2_3_VISC * divv + _2VISC * dvx_dx;
-                    system.pxy[i] = VISC * (dvx_dy + dvy_dx);
-                    system.pyy[i] = -system.pressure[i] - _2_3_VISC * divv + _2VISC * dvy_dy;
-                }
+            // restore scalar values
+            float dvx_dx = _mm512_reduce_add_ps(v_dvx_dx);
+            float dvx_dy = _mm512_reduce_add_ps(v_dvx_dy);
+            float dvy_dx = _mm512_reduce_add_ps(v_dvy_dx);
+            float dvy_dy = _mm512_reduce_add_ps(v_dvy_dy);
+            float divv = dvx_dx + dvy_dy;
+            
+            // physical calculation
+            if constexpr (IDEAL_FLUID == 1) {
+                system.pxx[i] = -system.pressure[i];
+                system.pxy[i] = 0.0f;
+                system.pyy[i] = -system.pressure[i];
+            } else {
+                system.pxx[i] = -system.pressure[i] - _2_3_VISC * divv + _2VISC * dvx_dx;
+                system.pxy[i] = VISC * (dvx_dy + dvy_dx);
+                system.pyy[i] = -system.pressure[i] - _2_3_VISC * divv + _2VISC * dvy_dy;
             }
         }
-    }
+}
 }
 
 // force
-void computeAcceleration(    
-    ParticleSystem& system,     
-    const SpatialHashGridSoA& grid
-) {
-    int n = system.x.size();
-    
+void computeAcceleration(ParticleSystem& system, const SpatialHashGridSoA& grid) {
+    int w = grid.grid_w;
+    int h = grid.grid_h;
+
+    // 预加载所有不变的常数向量，极大地节省寄存器压力
+    const __m512 v_H2 = _mm512_set1_ps(H2);
+    const __m512 v_H = _mm512_set1_ps(H);
+    const __m512 v_eps_H2 = _mm512_set1_ps(0.01f * H2);
+    const __m512 v_f_grad = _mm512_set1_ps(beta_poly6);
+    const __m512 v_half = _mm512_set1_ps(0.5f);
+    const __m512 v_m_alpha_c = _mm512_set1_ps(-MONAGHAN_ALPHA * CS);
+    const __m512 v_beta = _mm512_set1_ps(MONAGHAN_BETA);
+    const __m512 v_ones = _mm512_set1_ps(1.0f);
+    const __m512 v_zero = _mm512_setzero_ps();
+
+    // 嵌套循环遍历，完美跳过最外层的 Ghost Cells
     #pragma omp parallel for schedule(dynamic, DYNAMIC_SCHEDULE_CELL_BASED)
-    for (int i = 0; i < n; i++) {
-        float xi = system.x[i];
-        float yi = system.y[i];
-
-        float vxi = system.vx[i];
-        float vyi = system.vy[i];
+    for (int c = w + 1; c <= h*w-2; c++) {
+        int i_start = grid.cell_start[c];
+        int i_end = grid.cell_start[c+1];
         
-        float rhoi2 = system.rho[i] * system.rho[i];
-
-        float pxxi = system.pxx[i];
-        float pxyi = system.pxy[i];
-        float pyyi = system.pyy[i];
-
-        // acceleration
-        float axi = 0.0f;
-        float ayi = GRAV;
-
-        grid.forEachNeighbour(i, system, H, H2, [&](int j) {
-            float dx = xi - system.x[j];
-            float dy = yi - system.y[j];
-
-            float mj = system.mass[j];
-            float rhoj2 = system.rho[j] * system.rho[j];
+        // [i_start, i_end)
+        // for each particle in the cell
+        for (int i = i_start; i < i_end; i++) {
             
-            float pxxj = system.pxx[j];
-            float pxyj = system.pxy[j];
-            float pyyj = system.pyy[j];
-
-            auto [dW_dx, dW_dy] = get_dW_dxi_poly6(dx, dy);
-
-            float term1 = (pxxi / rhoi2 + pxxj / rhoj2);
-            float term2 = (pxyi / rhoi2 + pxyj / rhoj2);
-            float term3 = (pyyi / rhoi2 + pyyj / rhoj2);
+            // 1. 标量预计算中心粒子 i 的属性，提取除法，避免在内层循环重复计算
+            float rhoi = system.rho[i];
+            float inv_rhoi2_scalar = 1.0f / (rhoi * rhoi);
             
-            axi += mj * (term1 * dW_dx + term2 * dW_dy);
-            ayi += mj * (term2 * dW_dx + term3 * dW_dy);
+            __m512 v_xi = _mm512_set1_ps(system.x[i]);
+            __m512 v_yi = _mm512_set1_ps(system.y[i]);
+            __m512 v_vxi = _mm512_set1_ps(system.vx[i]);
+            __m512 v_vyi = _mm512_set1_ps(system.vy[i]);
+            __m512 v_rhoi = _mm512_set1_ps(rhoi);
+            
+            // 提前计算好 p/rho^2，作为累加时的不变量
+            __m512 v_pxxi_rhoi = _mm512_set1_ps(system.pxx[i] * inv_rhoi2_scalar);
+            __m512 v_pxyi_rhoi = _mm512_set1_ps(system.pxy[i] * inv_rhoi2_scalar);
+            __m512 v_pyyi_rhoi = _mm512_set1_ps(system.pyy[i] * inv_rhoi2_scalar);
 
-            // monaghan artificial viscosity, avoiding from particles cross each other
-            float dvx = system.vx[i] - system.vx[j];
-            float dvy = system.vy[i] - system.vy[j];
-            float vdotr = dvx * dx + dvy * dy;   // v_ij · r_ij
+            __m512 v_axi = _mm512_setzero_ps();
+            __m512 v_ayi = _mm512_setzero_ps();
 
-            if (vdotr < 0.0f) {
-                float r2 = dx*dx + dy*dy;
-                float denominator = r2 + 0.01f * H2; 
-                float mu = H * vdotr / denominator;
-                
-                float rhoAvg = 0.5f * (system.rho[i] + system.rho[j]);
-                float pi_ij = (-MONAGHAN_ALPHA * CS * mu + MONAGHAN_BETA * mu * mu) / rhoAvg;
+            for (const int nc : grid.getNeighbourCells(c)) {
+                int j_start = grid.cell_start[nc]; 
+                int j_end = grid.cell_start[nc+1];
+                int j_count = j_end - j_start;
 
-                axi -= mj * pi_ij * dW_dx;
-                ayi -= mj * pi_ij * dW_dy;
+                for (int j = 0; j < j_count; j += 16) {
+                    int remaining = j_count - j;
+                    __mmask16 mask = (remaining >= 16) ? 0xFFFF : (1U << remaining) - 1;
+                    int curr_j = j_start + j;
+
+                    // 步骤 A：仅加载坐标并验证距离 (延迟加载优化)
+                    __m512 v_xj = _mm512_maskz_loadu_ps(mask, &system.x[curr_j]);
+                    __m512 v_yj = _mm512_maskz_loadu_ps(mask, &system.y[curr_j]);
+                    
+                    __m512 v_dx = _mm512_sub_ps(v_xi, v_xj);
+                    __m512 v_dy = _mm512_sub_ps(v_yi, v_yj);
+                    __m512 v_r2 = _mm512_fmadd_ps(v_dx, v_dx, _mm512_mul_ps(v_dy, v_dy));
+
+                    // 二次过滤掩码: 处于平滑半径内
+                    __mmask16 range_mask = _mm512_mask_cmp_ps_mask(mask, v_r2, v_H2, _CMP_LT_OQ);
+
+                    if (range_mask > 0) {
+                        // 步骤 B：只对真正需要的粒子加载繁重的物理属性
+                        __m512 v_vxj  = _mm512_maskz_loadu_ps(range_mask, &system.vx[curr_j]);
+                        __m512 v_vyj  = _mm512_maskz_loadu_ps(range_mask, &system.vy[curr_j]);
+                        __m512 v_mj   = _mm512_maskz_loadu_ps(range_mask, &system.mass[curr_j]);
+                        __m512 v_rhoj = _mm512_maskz_loadu_ps(range_mask, &system.rho[curr_j]);
+                        __m512 v_pxxj = _mm512_maskz_loadu_ps(range_mask, &system.pxx[curr_j]);
+                        __m512 v_pxyj = _mm512_maskz_loadu_ps(range_mask, &system.pxy[curr_j]);
+                        __m512 v_pyyj = _mm512_maskz_loadu_ps(range_mask, &system.pyy[curr_j]);
+
+                        // 计算梯度 dW
+                        __m512 v_dWx, v_dWy;
+                        get_dW_dxi_poly6_simd(v_dx, v_dy, v_r2, v_H2, v_f_grad, v_dWx, v_dWy, range_mask);
+
+                        // --- 1. 应力张量力计算 ---
+                        __m512 v_rhoj2 = _mm512_mul_ps(v_rhoj, v_rhoj);
+                        __m512 v_inv_rhoj2 = _mm512_div_ps(v_ones, v_rhoj2);
+                        
+                        // term1, 2, 3 = (p_i/rho_i^2) + (p_j/rho_j^2)
+                        __m512 v_term1 = _mm512_fmadd_ps(v_pxxj, v_inv_rhoj2, v_pxxi_rhoi);
+                        __m512 v_term2 = _mm512_fmadd_ps(v_pxyj, v_inv_rhoj2, v_pxyi_rhoi);
+                        __m512 v_term3 = _mm512_fmadd_ps(v_pyyj, v_inv_rhoj2, v_pyyi_rhoi);
+
+                        // 组合累加: axi += mj * (term1*dWx + term2*dWy)
+                        __m512 v_ax_step = _mm512_fmadd_ps(v_term1, v_dWx, _mm512_mul_ps(v_term2, v_dWy));
+                        v_axi = _mm512_mask3_fmadd_ps(v_mj, v_ax_step, v_axi, range_mask);
+
+                        // 组合累加: ayi += mj * (term2*dWx + term3*dWy)
+                        __m512 v_ay_step = _mm512_fmadd_ps(v_term2, v_dWx, _mm512_mul_ps(v_term3, v_dWy));
+                        v_ayi = _mm512_mask3_fmadd_ps(v_mj, v_ay_step, v_ayi, range_mask);
+
+                        // --- 2. 人工黏性 (Monaghan) 计算 ---
+                        __m512 v_dvx = _mm512_sub_ps(v_vxi, v_vxj);
+                        __m512 v_dvy = _mm512_sub_ps(v_vyi, v_vyj);
+                        // vdotr = dvx*dx + dvy*dy
+                        __m512 v_vdotr = _mm512_fmadd_ps(v_dvx, v_dx, _mm512_mul_ps(v_dvy, v_dy));
+
+                        // 三次过滤掩码：仅当相互靠近时 (vdotr < 0) 计算黏性
+                        __mmask16 visc_mask = _mm512_mask_cmp_ps_mask(range_mask, v_vdotr, v_zero, _CMP_LT_OQ);
+
+                        if (visc_mask > 0) {
+                            __m512 v_denom = _mm512_add_ps(v_r2, v_eps_H2);
+                            // mu = H * vdotr / denom (使用带掩码的安全除法)
+                            __m512 v_mu = _mm512_mask_div_ps(v_zero, visc_mask, _mm512_mul_ps(v_H, v_vdotr), v_denom);
+                            
+                            __m512 v_rhoAvg = _mm512_mul_ps(v_half, _mm512_add_ps(v_rhoi, v_rhoj));
+                            
+                            // pi_ij = (-alpha*CS*mu + beta*mu^2) / rhoAvg  => mu*(beta*mu - alpha*CS) / rhoAvg
+                            __m512 v_pi = _mm512_fmadd_ps(v_beta, v_mu, v_m_alpha_c);
+                            v_pi = _mm512_mul_ps(v_pi, v_mu);
+                            v_pi = _mm512_mask_div_ps(v_zero, visc_mask, v_pi, v_rhoAvg);
+                            
+                            __m512 v_mj_pi = _mm512_mul_ps(v_mj, v_pi);
+                            
+                            // axi -= mj * pi * dWx => 相当于 -(mj_pi * dW) + axi
+                            // FNMADD: -(A*B) + C
+                            v_axi = _mm512_mask3_fnmadd_ps(v_mj_pi, v_dWx, v_axi, visc_mask);
+                            v_ayi = _mm512_mask3_fnmadd_ps(v_mj_pi, v_dWy, v_ayi, visc_mask);
+                        }
+                    }
+                }
             }
-        });
-
-        system.ax[i] = axi;
-        system.ay[i] = ayi;
+            
+            // 水平归约，添加外力并写回
+            system.ax[i] = _mm512_reduce_add_ps(v_axi);
+            system.ay[i] = _mm512_reduce_add_ps(v_ayi) + GRAV;
+        }
     }
 }
 
