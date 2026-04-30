@@ -27,12 +27,13 @@ void computeDensityPressure(
     int h = grid.grid_h;
     int n = grid.grid_n;
 
+    // ! var 1 basic density calculation
     const __m512 v_H2 = _mm512_set1_ps(H2);
     const __m512 v_poly6_factor = _mm512_set1_ps(alpha_poly6);
 
     // for each cell, process all its particles
     // beacause there is ghost cell, we start with grid_w + 1
-    #pragma omp parallel for schedule(static)
+    #pragma omp parallel for schedule(dynamic, DYNAMIC_SCHEDULE_CELL_BASED)
     for (int c = w + 1; c <= h*w-2; c++) {
         int i_start = grid.cell_start[c];
         int i_end = grid.cell_start[c+1];
@@ -86,61 +87,98 @@ void computeDensityPressure(
     }
 }
 
-void computeStress(    
-    ParticleSystem& system, 
-    const SpatialHashGridSoA& grid
-) {
-    int n = system.x.size();
+void computeStress(ParticleSystem& system, const SpatialHashGridSoA& grid) {
+    int w = grid.grid_w;
+    int h = grid.grid_h;
+    const __m512 v_H2 = _mm512_set1_ps(H2);
+    const __m512 v_f_grad = _mm512_set1_ps(beta_poly6);
 
-    #pragma omp parallel for schedule(static)
-    for (int i = 0; i < n; i++) {
-        float xi = system.x[i];
-        float yi = system.y[i];
-        
-        float vxi = system.vx[i];
-        float vyi = system.vy[i];
+    #pragma omp parallel for schedule(dynamic, DYNAMIC_SCHEDULE_CELL_BASED)
+    for (int y = 1; y < h - 1; y++) {
+        for (int x = 1; x < w - 1; x++) {
+            int c = y * w + x;
+            for (int i = grid.cell_start[c]; i < grid.cell_start[c+1]; i++) {
+                
+                // properties of particle i
+                __m512 v_xi = _mm512_set1_ps(system.x[i]);
+                __m512 v_yi = _mm512_set1_ps(system.y[i]);
+                __m512 v_vxi = _mm512_set1_ps(system.vx[i]);
+                __m512 v_vyi = _mm512_set1_ps(system.vy[i]);
 
-        // div(_v_)
-        float divv = 0.0f;
+                // accumulator for dv/dx, dv/dy, dW/dx, dW/dy
+                __m512 v_dvx_dx = _mm512_setzero_ps();
+                __m512 v_dvx_dy = _mm512_setzero_ps();
+                __m512 v_dvy_dx = _mm512_setzero_ps();
+                __m512 v_dvy_dy = _mm512_setzero_ps();
 
-        // dv/dx
-        float dvx_dx = 0.0f;
-        float dvx_dy = 0.0f;
-        float dvy_dx = 0.0f;
-        float dvy_dy = 0.0f;
-        
-        // sum them up
-        grid.forEachNeighbour(i, system, H, H2, [&](int j) {
-            float dx = xi - system.x[j];
-            float dy = yi - system.y[j];
+                for (const int nc : grid.getNeighbourCells(c)) {
+                    int j_start = grid.cell_start[nc]; 
+                    int j_end = grid.cell_start[nc+1];
+                    int j_count = j_end - j_start;
 
-            float dvxji = system.vx[j] - vxi;
-            float dvyji = system.vy[j] - vyi;
+                    for (int j = 0; j < j_count; j += 16) {
+                        int remaining = j_count - j;
+                        __mmask16 mask = (remaining >= 16) ? 0xFFFF : (1U << remaining) - 1;
+                        int curr_j = j_start + j;
 
-            float volume = system.mass[j] / system.rho[j];
+                        // properties of particle j
+                        __m512 v_xj = _mm512_maskz_loadu_ps(mask, &system.x[curr_j]);
+                        __m512 v_yj = _mm512_maskz_loadu_ps(mask, &system.y[curr_j]);
+                        __m512 v_vxj = _mm512_maskz_loadu_ps(mask, &system.vx[curr_j]);
+                        __m512 v_vyj = _mm512_maskz_loadu_ps(mask, &system.vy[curr_j]);
+                        __m512 v_mj = _mm512_maskz_loadu_ps(mask, &system.mass[curr_j]);
+                        __m512 v_rhoj = _mm512_maskz_loadu_ps(mask, &system.rho[curr_j]);
 
-            auto [dW_dx, dW_dy] = get_dW_dxi_poly6(dx, dy);
+                        // calculate dx, dy, r2
+                        __m512 v_dx = _mm512_sub_ps(v_xi, v_xj);
+                        __m512 v_dy = _mm512_sub_ps(v_yi, v_yj);
+                        __m512 v_r2 = _mm512_fmadd_ps(v_dx, v_dx, _mm512_mul_ps(v_dy, v_dy));
 
-            // divv
-            divv += volume * (dvxji * dW_dx + dvyji * dW_dy);
+                        __mmask16 range_mask = _mm512_mask_cmp_ps_mask(mask, v_r2, v_H2, _CMP_LT_OQ);
 
-            // dv/dx
-            dvx_dx += volume * dvxji * dW_dx;
-            dvx_dy += volume * dvxji * dW_dy;
-            dvy_dx += volume * dvyji * dW_dx;
-            dvy_dy += volume * dvyji * dW_dy;
-        });
+                        if (range_mask > 0) {
+                            // calculate V = m / rho
+                            __m512 v_vol = _mm512_div_ps(v_mj, v_rhoj);
+                            
+                            // calculate dv = vj - vi
+                            __m512 v_dvx = _mm512_sub_ps(v_vxj, v_vxi);
+                            __m512 v_dvy = _mm512_sub_ps(v_vyj, v_vyi);
 
-if constexpr (IDEAL_FLUID == 1) {
-        system.pxx[i] = -system.pressure[i];
-        system.pxy[i] = 0.0f;
-        system.pyy[i] = -system.pressure[i];
-} else if constexpr (IDEAL_FLUID == 2) {
-        system.pxx[i] = -system.pressure[i] - _2_3_VISC * divv + _2VISC * dvx_dx;
-        system.pxy[i] = VISC * (dvx_dy + dvy_dx);
-        system.pyy[i] = -system.pressure[i] - _2_3_VISC * divv + _2VISC * dvy_dy;
-}
+                            // calculate dW/dx, dW/dy
+                            __m512 v_dWx, v_dWy;
+                            get_dW_dxi_poly6_simd(v_dx, v_dy, v_r2, v_H2, v_f_grad, v_dWx, v_dWy, range_mask);
 
+                            // accumulate: dv_dx += V * dvx * dWx ...
+                            __m512 v_val = _mm512_mul_ps(v_vol, v_dWx);
+                            v_dvx_dx = _mm512_mask3_fmadd_ps(v_dvx, v_val, v_dvx_dx, range_mask);
+                            v_dvy_dx = _mm512_mask3_fmadd_ps(v_dvy, v_val, v_dvy_dx, range_mask);
+
+                            v_val = _mm512_mul_ps(v_vol, v_dWy);
+                            v_dvx_dy = _mm512_mask3_fmadd_ps(v_dvx, v_val, v_dvx_dy, range_mask);
+                            v_dvy_dy = _mm512_mask3_fmadd_ps(v_dvy, v_val, v_dvy_dy, range_mask);
+                        }
+                    }
+                }
+
+                // restore scalar values
+                float dvx_dx = _mm512_reduce_add_ps(v_dvx_dx);
+                float dvx_dy = _mm512_reduce_add_ps(v_dvx_dy);
+                float dvy_dx = _mm512_reduce_add_ps(v_dvy_dx);
+                float dvy_dy = _mm512_reduce_add_ps(v_dvy_dy);
+                float divv = dvx_dx + dvy_dy;
+                
+                // physical calculation
+                if constexpr (IDEAL_FLUID == 1) {
+                    system.pxx[i] = -system.pressure[i];
+                    system.pxy[i] = 0.0f;
+                    system.pyy[i] = -system.pressure[i];
+                } else {
+                    system.pxx[i] = -system.pressure[i] - _2_3_VISC * divv + _2VISC * dvx_dx;
+                    system.pxy[i] = VISC * (dvx_dy + dvy_dx);
+                    system.pyy[i] = -system.pressure[i] - _2_3_VISC * divv + _2VISC * dvy_dy;
+                }
+            }
+        }
     }
 }
 
@@ -151,7 +189,7 @@ void computeAcceleration(
 ) {
     int n = system.x.size();
     
-    #pragma omp parallel for schedule(static)
+    #pragma omp parallel for schedule(dynamic, DYNAMIC_SCHEDULE_CELL_BASED)
     for (int i = 0; i < n; i++) {
         float xi = system.x[i];
         float yi = system.y[i];
@@ -215,7 +253,8 @@ void computeAcceleration(
 const float DAMPING = -0.5f; 
 void integrate(ParticleSystem& system) {
     int n = system.x.size();
-    #pragma omp parallel for schedule(static)
+
+    #pragma omp parallel for schedule(dynamic, DYNAMIC_SCHEDULE_PARTICLE_BASED)
     for (int i = 0; i < n; i++) {
         system.vx[i]  += system.ax[i] * DT;
         system.vy[i]  += system.ay[i] * DT;

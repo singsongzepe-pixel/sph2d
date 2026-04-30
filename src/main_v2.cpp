@@ -25,7 +25,7 @@ void computeDensityPressure(
 ) {
     int n = system.x.size();
 
-    #pragma omp parallel for schedule(static)
+    #pragma omp parallel for schedule(dynamic, 16)
     for (int i = 0; i < n; i++) {
 
 if constexpr (RHO_VAR == 1) { // ! var 1 basic 
@@ -70,7 +70,7 @@ void computeStress(
 ) {
     int n = system.x.size();
 
-    #pragma omp parallel for schedule(static)
+    #pragma omp parallel for schedule(dynamic, 16)
     for (int i = 0; i < n; i++) {
         float xi = system.x[i];
         float yi = system.y[i];
@@ -129,7 +129,7 @@ void computeAcceleration(
 ) {
     int n = system.x.size();
     
-    #pragma omp parallel for schedule(static)
+    #pragma omp parallel for schedule(dynamic, 16)
     for (int i = 0; i < n; i++) {
         float xi = system.x[i];
         float yi = system.y[i];
@@ -192,7 +192,8 @@ void computeAcceleration(
 const float DAMPING = -0.5f; 
 void integrate(ParticleSystem& system) {
     int n = system.x.size();
-    #pragma omp parallel for schedule(static)
+    
+    #pragma omp parallel for schedule(dynamic, 16)
     for (int i = 0; i < n; i++) {
         system.vx[i]  += system.ax[i] * DT;
         system.vy[i]  += system.ay[i] * DT;

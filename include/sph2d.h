@@ -148,6 +148,20 @@ FORCE_INLINE __m512 get_W_poly6_simd(__m512 v_r2, __m512 v_H2, __m512 v_factor) 
     return _mm512_mul_ps(v_factor, diff3);
 }
 
+FORCE_INLINE void get_dW_dxi_poly6_simd(
+    __m512 v_dx, __m512 v_dy, 
+    __m512 v_r2, __m512 v_H2, 
+    __m512 v_f_grad,
+    __m512& v_dW_dx, __m512& v_dW_dy,
+    __mmask16 v_mask
+) {
+    __m512 v_diff = _mm512_sub_ps(v_H2, v_r2);
+    __m512 v_diff2 = _mm512_mul_ps(v_diff, v_diff);
+    __m512 v_common = _mm512_mul_ps(v_f_grad, v_diff2);
+    
+    v_dW_dx = _mm512_mul_ps(v_common, v_dx);
+    v_dW_dy = _mm512_mul_ps(v_common, v_dy);    
+}
 
 const float GAMMA = 7;
 const float B = 30000.0f;               // stiffness

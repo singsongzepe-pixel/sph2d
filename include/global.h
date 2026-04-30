@@ -12,11 +12,14 @@ const int screenWidth           = 1200;
 const int screenHeight          = 1200;
 const float PHYSICAL_SCREEN_MAPPING = (float)screenWidth / physicalWidth;
 
+#define DYNAMIC_SCHEDULE_CELL_BASED 64
+#define DYNAMIC_SCHEDULE_PARTICLE_BASED 256
+
 // rho calculation formula
 #define RHO_VAR 1
 
 // 1: ideal fliud, 2: real fluid
-#define IDEAL_FLUID 1
+#define IDEAL_FLUID 2
 
 // select test type
 #define PARTICLE_SHAPE 4
