@@ -326,6 +326,7 @@ struct SpatialHashGridSoA {
         tmp_pxx.resize(n); tmp_pxy.resize(n); tmp_pyy.resize(n);
     }
 
+    // for better cache hit
     void reorderParticleSystem(ParticleSystem& system) {
         int n = (int)system.x.size();
         resizeBuffers(n);
@@ -392,18 +393,18 @@ struct SpatialHashGridSoA {
         }
     }
 
-    // process 16 particles in a time by callback16, and remaining particles process by callback1
-    template <typename Func16, typename Func1>
-    inline void forEachNeighbour16(
-        int i,
-        const ParticleSystem& system,
-        float h, float h2,
-        Func16 callback16,
-        Func1 callback1
-    ) const {
-        float xi = system.x[i];
-        float yi = system.y[i];
-    }
+    // // process 16 particles in a time by callback16, and remaining particles process by callback1
+    // template <typename Func16, typename Func1>
+    // inline void forEachNeighbour16(
+    //     int i,
+    //     const ParticleSystem& system,
+    //     float h, float h2,
+    //     Func16 callback16,
+    //     Func1 callback1
+    // ) const {
+    //     float xi = system.x[i];
+    //     float yi = system.y[i];
+    // }
 
     std::array<int, 9> getNeighbourCells(int c) const {
         int c_minus_grid_w = c - grid_w;
@@ -413,6 +414,43 @@ struct SpatialHashGridSoA {
             c - 1,              c,               c + 1,                 // curr line
             c_plus_grid_w - 1,  c_plus_grid_w,  c_plus_grid_w + 1       // bottom line
         };
+    }
+
+    // ! Extension for Verlet List
+    static const int MAX_NEIGHBOURS = 64;
+    std::vector<int> neighbour_count;
+
+    std::vector<int> neighbour_list_flat;
+
+    void initVerletList(int num_particles) {
+        neighbour_count.resize(num_particles, 0);
+        neighbour_list_flat.resize(num_particles * MAX_NEIGHBOURS, 0);
+    }
+
+    // build verlet list
+    // after grid.build(system)
+    void buildVerletList(const ParticleSystem& system, float search_radius) {
+        int n = system.x.size();
+
+        if (neighbour_count.size() != n) {
+            initVerletList(n);
+        }
+
+        #pragma omp parallel for schedule(dynamic, DYNAMIC_SCHEDULE_PARTICLE_BASED)
+        for (int i = 0; i < n; i++) {
+            int count = 0;
+
+            int base_idx = i * MAX_NEIGHBOURS;
+
+            forEachNeighbour(i, system, search_radius, search_radius * search_radius, [&](int j) {
+                if (count < MAX_NEIGHBOURS) {
+                    neighbour_list_flat[base_idx + count++] = j;
+                }
+                // if exceed, should throw some Exception or allocate a larger memory pool
+            });
+
+            neighbour_count[i] = count;
+        }
     }
 };
 

@@ -98,7 +98,7 @@ struct ParticleSystem {
 const float alpha = 5.0f / (PI * H2);
 // according to pro-neighbours finding, the r always less than H
 // LucyQuartic kernel function
-float get_W(float r) { // r - real distance between two particles
+FORCE_INLINE float get_W(float r) { // r - real distance between two particles
     float R = r / H;
     float R2 = R*R;
     float R3 = R2*R;
@@ -108,7 +108,7 @@ float get_W(float r) { // r - real distance between two particles
 }
 
 const float beta = -12.0f * alpha / H2;
-std::array<float, 2> get_dW_dxi(float dx, float dy) {    
+FORCE_INLINE std::array<float, 2> get_dW_dxi(float dx, float dy) {    
     float r = std::sqrt(dx*dx + dy*dy);
     float term = 1.0f - r/H;
 
@@ -165,7 +165,7 @@ FORCE_INLINE void get_dW_dxi_poly6_simd(
 
 const float GAMMA = 7;
 const float B = 30000.0f;               // stiffness
-float get_pressure(float rho) {
+FORCE_INLINE float get_pressure(float rho) {
     float p = B * (std::pow(rho / RHO0, GAMMA) - 1.0f);
     return p;
 }
