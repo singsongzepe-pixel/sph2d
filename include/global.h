@@ -3,10 +3,13 @@
 #include "sph2d.h"
 #include "shape.h"
 
+using namespace sph2d;
+using namespace sph2d::shape;
+
 #define DYNAMIC_SCHEDULE_CELL_BASED 64
 #define DYNAMIC_SCHEDULE_PARTICLE_BASED 256
 
-// define the universal parameter for each version
+// ! HYPERPARAMETERS
 
 // assuming the simulation area(bounding box) is a square
 const float physicalWidth       = 3.0f; // [0.0f, ...f]
@@ -24,6 +27,10 @@ const int ITERATION_TO_COUNT = 100;
 // visual
 const float PARTICLE_RADIUS = 1.5f;
 
+// ! END OF HYPERPARAMETERS
+
+// ! TUNABLE PARAMETERS
+
 // basic boundary damping for benchmark, v1, v2, v3
 const float DAMPING = -0.5f; 
 const float BOUNDARY_SHIFT_EPSILON  = 0.003f;
@@ -38,7 +45,10 @@ const float HARD_DAMPING       = -0.5f;
 const float VERLET_SKIN_RADIUS = 0.2f * H;
 const float VERLET_SEARCH_RADIUS = H + VERLET_SKIN_RADIUS;
 
-// ! SOME SIMULATION OPTIONS
+// ! END OF TUNABLE PARAMETERS
+
+// ! SIMULATION OPTIONS
+
 // rho calculation formula
 // 1. basic
 // 2. Shepard normalized
@@ -78,9 +88,6 @@ const float VERLET_SEARCH_RADIUS = H + VERLET_SKIN_RADIUS;
 #define VERLET_LIST 2
 
 // ! END OF SIMULATION OPTIONS
-
-using namespace sph2d;
-using namespace sph2d::shape;
 
 std::vector<Particle> getParticles() {
     std::vector<Particle> particles;

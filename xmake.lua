@@ -84,6 +84,7 @@ target("v3")
 -- SoA, reordering, spatial hash, poly6 kernel, SIMD
 -- approximate reciprocal instruction
 -- better boundary process 
+-- verlet list optimization (radius = 1.2 * H)
 target("v4")
     set_kind("binary")
 
