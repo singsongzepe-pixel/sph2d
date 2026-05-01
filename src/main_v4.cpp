@@ -872,7 +872,7 @@ int main() {
                 max_displacement_sq = 0.0f;
                 force_rebuild = false;
 
-                std::cout << "Iteration: " << iteration << " rebuild verlet list.\n";
+                // std::cout << "Iteration: " << iteration << " rebuild verlet list.\n";
             }            
 #endif
 
