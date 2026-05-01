@@ -189,7 +189,6 @@ void computeAcceleration(
     }
 }
 
-const float DAMPING = -0.5f; 
 void integrate(ParticleSystem& system) {
     int n = system.x.size();
     

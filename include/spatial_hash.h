@@ -442,12 +442,14 @@ struct SpatialHashGridSoA {
 
             int base_idx = i * MAX_NEIGHBOURS;
 
+            // ? particle based or cell based
             forEachNeighbour(i, system, search_radius, search_radius * search_radius, [&](int j) {
                 if (count < MAX_NEIGHBOURS) {
                     neighbour_list_flat[base_idx + count++] = j;
                 }
                 // if exceed, should throw some Exception or allocate a larger memory pool
             });
+            
 
             neighbour_count[i] = count;
         }

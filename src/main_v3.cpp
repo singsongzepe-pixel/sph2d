@@ -318,7 +318,6 @@ void computeAcceleration(ParticleSystem& system, const SpatialHashGridSoA& grid)
     }
 }
 
-const float DAMPING = -0.5f; 
 void integrate(ParticleSystem& system) {
     int n = system.x.size();
 

@@ -209,7 +209,6 @@ void computeAcceleration(
     }
 }
 
-const float DAMPING = -0.5f; 
 void integrate(std::vector<Particle>& particles) {
     for (auto& p : particles) {
         p.vx += p.ax * DT;

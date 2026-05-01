@@ -189,7 +189,6 @@ void computeAcceleration(
     }
 }
 
-const float DAMPING = -0.5f; 
 void integrate(std::vector<Particle>& particles) {
     int n = particles.size();
     #pragma omp parallel for schedule(static)

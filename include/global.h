@@ -3,6 +3,9 @@
 #include "sph2d.h"
 #include "shape.h"
 
+#define DYNAMIC_SCHEDULE_CELL_BASED 64
+#define DYNAMIC_SCHEDULE_PARTICLE_BASED 256
+
 // define the universal parameter for each version
 
 // assuming the simulation area(bounding box) is a square
@@ -12,8 +15,28 @@ const int screenWidth           = 1200;
 const int screenHeight          = 1200;
 const float PHYSICAL_SCREEN_MAPPING = (float)screenWidth / physicalWidth;
 
-#define DYNAMIC_SCHEDULE_CELL_BASED 64
-#define DYNAMIC_SCHEDULE_PARTICLE_BASED 256
+// substep in each frame
+const int substep = 10;
+
+// iteration to count time (test performance)
+const int ITERATION_TO_COUNT = 100;
+
+// visual
+const float PARTICLE_RADIUS = 1.5f;
+
+// basic boundary damping for benchmark, v1, v2, v3
+const float DAMPING = -0.5f; 
+const float BOUNDARY_SHIFT_EPSILON  = 0.003f;
+
+// better boundary process for v4
+const float PARTICLE_COLLISION_RADIUS = DX * 0.8f; 
+const float BOUNDARY_STIFFNESS = 100000.0f; 
+const float BOUNDARY_DAMPING   = 250.0f;
+const float HARD_DAMPING       = -0.5f;
+
+// verlet list constants
+const float VERLET_SKIN_RADIUS = 0.2f * H;
+const float VERLET_SEARCH_RADIUS = H + VERLET_SKIN_RADIUS;
 
 // ! SOME SIMULATION OPTIONS
 // rho calculation formula
@@ -49,6 +72,12 @@ const float PHYSICAL_SCREEN_MAPPING = (float)screenWidth / physicalWidth;
 #define SOFTWARE_PREFETCH 2
 #define SOFTWARE_PREFETCH_DIST 64 // 32/64 don't be too late or too early
 
+// verlet list
+// 1. disable verlet list
+// 2. enable verlet list
+#define VERLET_LIST 2
+
+// ! END OF SIMULATION OPTIONS
 
 using namespace sph2d;
 using namespace sph2d::shape;
@@ -86,23 +115,3 @@ std::vector<Particle> getParticles() {
 
     return particles;
 }
-
-// substep in each frame
-const int substep = 10;
-
-// iteration to count time (test performance)
-const int ITERATION_TO_COUNT = 100;
-
-// visual
-const float PARTICLE_RADIUS = 1.5f;
-
-// basic boundary damping for benchmark, v1, v2, v3
-const float DAMPING = -0.5f; 
-const float BOUNDARY_SHIFT_EPSILON  = 0.003f;
-
-// better boundary process for v4
-const float PARTICLE_COLLISION_RADIUS = DX * 0.8f; 
-const float BOUNDARY_STIFFNESS = 100000.0f; 
-const float BOUNDARY_DAMPING   = 250.0f;
-const float HARD_DAMPING       = -0.5f;
-
