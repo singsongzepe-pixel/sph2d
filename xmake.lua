@@ -111,3 +111,32 @@ target("v4")
     set_symbols("debug")
     add_vectorexts("avx2")
 
+-- SoA, reordering, spatial hash, poly6 kernel, SIMD
+-- approximate reciprocal instruction
+-- better boundary process 
+-- verlet list optimization (radius = 1.2 * H)
+target("v5")
+    set_kind("binary")
+
+    add_includedirs("include")
+
+    add_files("src/main_v5.cpp")
+    add_packages("raylib")
+    set_languages("cxx17")
+    set_optimize("fastest")
+
+    if is_plat("windows") then
+        -- enable OpenMP on Windows
+        add_cxflags("/openmp")
+        -- enable AVX512 on Windows
+        add_cxflags("/arch:AVX2", "/fp:fast")
+    else
+        add_cxflags("-fopenmp")
+        add_ldflags("-fopenmp")
+
+        -- on gcc, g++
+        add_cxflags("-mavx2", "-mfma")
+    end
+
+    set_symbols("debug")
+    add_vectorexts("avx2")

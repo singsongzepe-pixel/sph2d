@@ -181,7 +181,7 @@ void computeStress(ParticleSystem& system, const SpatialHashGridSoA& grid) {
                 system.pyy[i] = -system.pressure[i] - _2_3_VISC * divv + _2VISC * dvy_dy;
             }
         }
-}
+    }
 }
 
 // force
@@ -353,7 +353,6 @@ int main() {
 
     std::cout << "simulation step time: DT " << DT << "\n";
 
-    InitWindow(screenWidth, screenHeight, "SPH 2D Fluid Insight");
 
     // init particles
     std::vector<Particle> particles = getParticles();
@@ -365,17 +364,24 @@ int main() {
     // arrange those paritcles in spatial hash struct
     SpatialHashGridSoA grid(physicalWidth, physicalHeight, H);
 
+#if RENDER_PARTICLE == 2
+    InitWindow(screenWidth, screenHeight, "SPH 2D Fluid Insight");
     Camera2D camera = { 0 };
     camera.zoom = 1.0f;
 
     SetTargetFPS(60);
 
     float simulatedTime = 0.0f;
+#endif
     
     auto startTime = std::chrono::high_resolution_clock::now();
     int iteration = 0;
 
+#if RENDER_PARTICLE == 1
+    while (1) {
+#else if RENDER_PARTICLE == 2
     while (!WindowShouldClose()) {
+#endif
         // `substep` times iteration in one frame
         for(int i=0; i < substep; i++) {
             grid.build(system);
@@ -385,8 +391,10 @@ int main() {
             computeAcceleration(system, grid);
 
             integrate(system);
-
+            
+#if RENDER_PARTICLE == 2
             simulatedTime += DT;
+#endif
         }
 
         if (iteration % ITERATION_TO_COUNT == 0) {
@@ -394,6 +402,7 @@ int main() {
             std::cout << "iteration: " << iteration << ", time: " << std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count() << "ms\n";
         }
 
+#if RENDER_PARTICLE == 2
         float realTime = GetTime();
 
         BeginDrawing();
@@ -424,10 +433,13 @@ int main() {
         DrawText(realTimeText, screenWidth - realTextWidth - 10, 35, fontSize, GREEN);
 
         EndDrawing();
+#endif
 
         iteration++;
-
     }
+    
+#if RENDER_PARTICLE == 2
     CloseWindow();
+#endif
     return 0;
 }

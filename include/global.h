@@ -49,6 +49,11 @@ const float VERLET_SEARCH_RADIUS = H + VERLET_SKIN_RADIUS;
 
 // ! SIMULATION OPTIONS
 
+// render particle
+// 1. disable render particle
+// 2. enable render particle
+#define RENDER_PARTICLE 1
+
 // rho calculation formula
 // 1. basic
 // 2. Shepard normalized
@@ -85,7 +90,7 @@ const float VERLET_SEARCH_RADIUS = H + VERLET_SKIN_RADIUS;
 // verlet list
 // 1. disable verlet list
 // 2. enable verlet list
-#define VERLET_LIST 2
+#define VERLET_LIST 1
 
 // ! END OF SIMULATION OPTIONS
 
